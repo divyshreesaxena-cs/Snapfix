@@ -35,10 +35,33 @@ api.interceptors.response.use(
 );
 
 // Auth APIs
+// Auth APIs
 export const authAPI = {
-  sendOTP: (phone, endpoint = 'auth') => api.post(`/${endpoint}/send-otp`, { phone }),
-  verifyOTP: (phone, otp, endpoint = 'auth') => api.post(`/${endpoint}/verify-otp`, { phone, otp }),
+  // OTP login (works for both /auth and /worker-auth)
+  sendOTP: (phone, endpoint = 'auth') =>
+    api.post(`/${endpoint}/send-otp`, { phone }),
+
+  verifyOTP: (phone, otp, endpoint = 'auth') =>
+    api.post(`/${endpoint}/verify-otp`, { phone, otp }),
+
+  // ✅ These are what Login.jsx is using
+  register: (payload, endpoint = 'auth') =>
+    api.post(`/${endpoint}/register`, payload),
+
+  login: (payload, endpoint = 'auth') =>
+    api.post(`/${endpoint}/login`, payload),
+
+  // ✅ Forgot password (support BOTH call styles used in Login.jsx)
+  forgotPasswordSendOTP: (arg, endpoint = 'auth') => {
+    const phone = typeof arg === 'string' ? arg : arg?.phone;
+    return api.post(`/${endpoint}/forgot-password/send-otp`, { phone });
+  },
+
+  forgotPasswordVerifyOTP: (payload, endpoint = 'auth') =>
+    api.post(`/${endpoint}/forgot-password/verify-otp`, payload),
 };
+
+
 
 // Profile APIs
 export const profileAPI = {

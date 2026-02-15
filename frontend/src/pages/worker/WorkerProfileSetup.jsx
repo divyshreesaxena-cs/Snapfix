@@ -1,15 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { workerProfileAPI, locationAPI, workersAPI } from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
 
 const SERVICE_OPTIONS = ["Electrician", "Plumbing", "Painting", "Carpenter"];
 
 export default function WorkerProfileSetup() {
   const navigate = useNavigate();
+  const { updateUser } = useAuth();
 
   const [formData, setFormData] = useState({
     name: "",
-    workerId: "",
     phone: "",
     idProofNumber: "",
     servicesProvided: ["Electrician"],
@@ -23,6 +24,8 @@ export default function WorkerProfileSetup() {
     profileImage: null,
     availability: true,
   });
+
+  const [workerId, setWorkerId] = useState(""); // ✅ read-only display
 
   const [loading, setLoading] = useState(false);
   const [searchingPincode, setSearchingPincode] = useState(false);
@@ -44,7 +47,6 @@ export default function WorkerProfileSetup() {
 
   const numericRate = Number(formData.pricePerHour || 0);
 
-  // highlight extremes (still allowed)
   const lowExtreme = rateInfo
     ? numericRate <= allowedMin + (allowedMax - allowedMin) * 0.1
     : false;
@@ -52,6 +54,49 @@ export default function WorkerProfileSetup() {
     ? numericRate >= allowedMax - (allowedMax - allowedMin) * 0.1
     : false;
 
+  // ✅ Load existing worker profile so fields + workerId show up
+  useEffect(() => {
+    let alive = true;
+
+    async function loadProfile() {
+      setError("");
+      try {
+        const res = await workerProfileAPI.getProfile();
+        const w = res?.data?.data || res?.data?.worker || res?.data;
+
+        if (!alive || !w) return;
+
+        setWorkerId(w.workerId || "");
+        setFormData((prev) => ({
+          ...prev,
+          name: w.name || "",
+          phone: w.phone || "",
+          idProofNumber: w.idProofNumber || "",
+          servicesProvided: w.servicesProvided?.length ? w.servicesProvided : prev.servicesProvided,
+          serviceCategory:
+            w.serviceCategory ||
+            (w.servicesProvided?.length ? w.servicesProvided[0] : prev.serviceCategory),
+          pricePerHour: w.pricePerHour ?? prev.pricePerHour,
+          experience: w.experience ?? prev.experience,
+          pincode: w.location?.pincode || "",
+          city: w.location?.city || "",
+          state: w.location?.state || "",
+          country: w.location?.country || prev.country,
+          availability: w.availability ?? prev.availability,
+        }));
+      } catch (err) {
+        // if token missing/expired, interceptor may redirect; otherwise show message
+        setError(err?.response?.data?.message || "Failed to load worker profile.");
+      }
+    }
+
+    loadProfile();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Fetch rate insights when category changes
   useEffect(() => {
     let alive = true;
 
@@ -60,27 +105,12 @@ export default function WorkerProfileSetup() {
       try {
         const res = await workersAPI.getRateInsights(selectedCategory);
         if (!alive) return;
-
-        const data = res?.data?.data || null;
-        setRateInfo(data);
-
-        // Clamp current rate into allowed bounds if out-of-range
-        const min = data?.allowedRange?.min;
-        const max = data?.allowedRange?.max;
-
-        if (typeof min === "number" && typeof max === "number") {
-          const current = Number(formData.pricePerHour);
-          if (!Number.isNaN(current) && (current < min || current > max)) {
-            setFormData((prev) => ({
-              ...prev,
-              pricePerHour: Math.min(Math.max(current, min), max),
-            }));
-          }
-        }
+        setRateInfo(res?.data?.data || res?.data || null);
       } catch (e) {
+        if (!alive) return;
         setRateInfo(null);
       } finally {
-        setLoadingRate(false);
+        if (alive) setLoadingRate(false);
       }
     }
 
@@ -88,40 +118,38 @@ export default function WorkerProfileSetup() {
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory]);
 
-  // -----------------------------
-  // Pincode autofill (via backend)
-  // -----------------------------
+  // Pincode lookup
   useEffect(() => {
-    const pin = (formData.pincode || "").trim();
-    if (!/^[0-9]{6}$/.test(pin)) return;
-
     let alive = true;
-    const t = setTimeout(async () => {
+
+    async function lookup() {
+      if (!formData.pincode || formData.pincode.length !== 6) return;
+
       setSearchingPincode(true);
       try {
-        const res = await locationAPI.lookupPincode(pin);
-        if (!alive) return;
+        const res = await locationAPI.lookupPincode(formData.pincode);
+        const data = res?.data?.data;
 
-        const data = res?.data?.data || {};
+        if (!alive || !data) return;
+
         setFormData((prev) => ({
           ...prev,
           city: data.city || prev.city,
           state: data.state || prev.state,
-          country: data.country || prev.country || "India",
+          country: data.country || prev.country,
         }));
-      } catch (e) {
-        // user can type manually
+      } catch (err) {
+        // silent
       } finally {
-        setSearchingPincode(false);
+        if (alive) setSearchingPincode(false);
       }
-    }, 400);
+    }
 
+    lookup();
     return () => {
       alive = false;
-      clearTimeout(t);
     };
   }, [formData.pincode]);
 
@@ -143,7 +171,6 @@ export default function WorkerProfileSetup() {
     setSuccessMsg("");
 
     if (!formData.name.trim()) return setError("Please enter your name.");
-    if (!formData.workerId.trim()) return setError("Please enter your Worker ID.");
     if (!formData.serviceCategory) return setError("Please select a service category.");
 
     if (!Number.isFinite(Number(formData.pricePerHour))) {
@@ -156,19 +183,31 @@ export default function WorkerProfileSetup() {
 
     setLoading(true);
     try {
+      // ✅ Do NOT send workerId/phone from UI; backend already has them
+      const { workerId: _w, phone: _p, ...rest } = formData;
+
       const payload = {
-        ...formData,
+        ...rest,
         pricePerHour: Number(formData.pricePerHour),
         experience: Number(formData.experience || 0),
       };
 
-      // ✅ FIX: use existing API method
       const res = await workerProfileAPI.updateProfile(payload);
 
       if (res?.data?.success) {
+        const updated = res?.data?.data || res?.data?.worker;
+
+        if (updated) {
+          // ✅ IMPORTANT: update local auth user so route guards stop redirecting back
+          updateUser(updated);
+        }
+
         setSuccessMsg("Profile saved successfully!");
-        // ✅ FIX: redirect to an existing route
-        setTimeout(() => navigate("/worker/dashboard"), 400);
+
+        // ✅ Only go to dashboard if profile is complete
+        if (updated?.isProfileComplete) {
+          navigate("/worker/dashboard");
+        }
       } else {
         setError(res?.data?.message || "Failed to save profile.");
       }
@@ -202,24 +241,21 @@ export default function WorkerProfileSetup() {
             </div>
           ) : null}
 
+          {/* ✅ Worker ID (read-only) */}
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-gray-700">Worker ID</label>
+            <div className="mt-1 w-full rounded-xl border px-4 py-2 bg-gray-50 text-gray-800">
+              {workerId || "—"}
+            </div>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="block text-sm font-medium text-gray-700">Full Name</label>
               <input
                 value={formData.name}
                 onChange={(e) => setField("name", e.target.value)}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
-                placeholder="Your name"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Worker ID</label>
-              <input
-                value={formData.workerId}
-                onChange={(e) => setField("workerId", e.target.value)}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
-                placeholder="e.g. WKR12345"
+                className="mt-1 w-full rounded-xl border px-4 py-2"
               />
             </div>
 
@@ -228,78 +264,46 @@ export default function WorkerProfileSetup() {
               <input
                 value={formData.idProofNumber}
                 onChange={(e) => setField("idProofNumber", e.target.value)}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
-                placeholder="Aadhaar/PAN etc."
+                className="mt-1 w-full rounded-xl border px-4 py-2"
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700">Service Category</label>
               <select
-                value={selectedCategory}
+                value={formData.serviceCategory}
                 onChange={(e) => handleServiceChange(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
+                className="mt-1 w-full rounded-xl border px-4 py-2"
               >
-                {SERVICE_OPTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+                {SERVICE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <div className="flex items-center justify-between">
-                <label className="block text-sm font-medium text-gray-700">Hourly Rate (₹/hr)</label>
-                <span className="text-xs text-gray-500">Allowed: ₹{allowedMin}–₹{allowedMax}</span>
-              </div>
-
+              <label className="block text-sm font-medium text-gray-700">Hourly Rate (₹/hr)</label>
               <input
                 type="number"
-                min={allowedMin}
-                max={allowedMax}
                 value={formData.pricePerHour}
-                onChange={(e) => setField("pricePerHour", Number(e.target.value))}
-                className={`mt-1 w-full rounded-xl border px-4 py-2 outline-none focus:ring-2 ${
-                  lowExtreme || highExtreme
-                    ? "border-yellow-300 focus:ring-yellow-200"
-                    : "border-gray-200 focus:ring-green-200"
+                onChange={(e) => setField("pricePerHour", e.target.value)}
+                className={`mt-1 w-full rounded-xl border px-4 py-2 ${
+                  lowExtreme ? "border-yellow-300" : highExtreme ? "border-yellow-300" : ""
                 }`}
-                placeholder="e.g. 550"
               />
-
-              <div className="mt-2 text-sm text-gray-600 space-y-1">
+              <div className="text-xs text-gray-500 mt-2">
                 {loadingRate ? (
-                  <div className="text-xs text-gray-500">Loading recommended rates…</div>
+                  "Loading rate insights…"
                 ) : rateInfo ? (
                   <>
-                    {typeof typicalLow === "number" && typeof typicalHigh === "number" ? (
-                      <div className="text-xs text-gray-600">
-                        Most workers charge <b>₹{typicalLow}–₹{typicalHigh}/hr</b>
-                      </div>
-                    ) : null}
-
-                    {typeof recommended === "number" ? (
-                      <div className="text-xs text-gray-600">
-                        Recommended rate (median): <b>₹{recommended}/hr</b>
-                      </div>
-                    ) : null}
-
-                    {lowExtreme ? (
-                      <div className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-100 rounded-lg px-3 py-2">
-                        You picked a rate near the low end. Allowed, but you may get more bookings with a typical rate.
-                      </div>
-                    ) : null}
-                    {highExtreme ? (
-                      <div className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-100 rounded-lg px-3 py-2">
-                        You picked a rate near the high end. Allowed, but customers may compare prices.
-                      </div>
-                    ) : null}
+                    Allowed: ₹{allowedMin} - ₹{allowedMax}
+                    {recommended ? ` • Recommended: ~₹${recommended}` : ""}
+                    {typicalLow && typicalHigh ? ` • Typical: ₹${typicalLow}-₹${typicalHigh}` : ""}
                   </>
                 ) : (
-                  <div className="text-xs text-gray-500">
-                    (Couldn’t load recommendations right now — you can still set your rate within allowed range.)
-                  </div>
+                  `Allowed: ₹${allowedMin} - ₹${allowedMax}`
                 )}
               </div>
             </div>
@@ -309,71 +313,54 @@ export default function WorkerProfileSetup() {
               <input
                 type="number"
                 value={formData.experience}
-                onChange={(e) => setField("experience", Number(e.target.value))}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
-                placeholder="0"
+                onChange={(e) => setField("experience", e.target.value)}
+                className="mt-1 w-full rounded-xl border px-4 py-2"
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Pincode</label>
-                <input
-                  value={formData.pincode}
-                  onChange={(e) => setField("pincode", e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
-                  placeholder="6-digit pincode"
-                />
-                {searchingPincode ? (
-                  <div className="text-xs text-gray-500 mt-1">Fetching city/state…</div>
-                ) : null}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">City</label>
-                <input
-                  value={formData.city}
-                  onChange={(e) => setField("city", e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
-                  placeholder="City"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">State</label>
-                <input
-                  value={formData.state}
-                  onChange={(e) => setField("state", e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
-                  placeholder="State"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Country</label>
-                <input
-                  value={formData.country}
-                  onChange={(e) => setField("country", e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 outline-none focus:ring-2 focus:ring-green-200"
-                  placeholder="India"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Pincode</label>
               <input
-                type="checkbox"
-                checked={!!formData.availability}
-                onChange={(e) => setField("availability", e.target.checked)}
-                className="h-4 w-4"
+                value={formData.pincode}
+                onChange={(e) => setField("pincode", e.target.value.replace(/\D/g, "").slice(0, 6))}
+                className="mt-1 w-full rounded-xl border px-4 py-2"
               />
-              <span className="text-sm text-gray-700">Available for bookings</span>
+              {searchingPincode ? (
+                <div className="text-xs text-gray-500 mt-1">Detecting city/state…</div>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">City</label>
+              <input
+                value={formData.city}
+                onChange={(e) => setField("city", e.target.value)}
+                className="mt-1 w-full rounded-xl border px-4 py-2"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">State</label>
+              <input
+                value={formData.state}
+                onChange={(e) => setField("state", e.target.value)}
+                className="mt-1 w-full rounded-xl border px-4 py-2"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Country</label>
+              <input
+                value={formData.country}
+                onChange={(e) => setField("country", e.target.value)}
+                className="mt-1 w-full rounded-xl border px-4 py-2"
+              />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-green-600 text-white py-3 font-semibold hover:bg-green-700 disabled:opacity-60"
+              className="w-full rounded-xl bg-green-600 text-white py-3 font-semibold"
             >
               {loading ? "Saving…" : "Save Profile"}
             </button>

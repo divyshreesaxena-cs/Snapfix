@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import RoleProtectedRoute from './components/RoleProtectedRoute';
 import Navbar from './components/Navbar';
+import Welcome from './pages/Welcome';
 
 // Pages
 import Login from './pages/Login';
@@ -32,6 +33,7 @@ function App() {
           
           <Routes>
             {/* Public Routes */}
+            <Route path="/" element={<Welcome />} />
             <Route path="/login" element={<Login />} />
             
             {/* Protected Routes */}
@@ -77,7 +79,7 @@ function App() {
               </RoleProtectedRoute>
             } />
             
-                        <Route path="/booking-details/:bookingId" element={
+            <Route path="/booking-details/:bookingId" element={
               <RoleProtectedRoute allow={['customer']}>
                 <BookingDetails />
               </RoleProtectedRoute>
@@ -114,9 +116,6 @@ function App() {
                 <WorkerProfileSetup />
               </RoleProtectedRoute>
             } />
-
-            {/* Redirect root to login or home */}
-            <Route path="/" element={<Navigate to="/login" replace />} />
             
             {/* 404 Route */}
             <Route path="*" element={

@@ -12,7 +12,7 @@ const otpSchema = new mongoose.Schema(
     // Differentiate OTP usage to avoid customer/worker clashes
     purpose: {
       type: String,
-      enum: ['customer', 'worker'],
+      enum: ['customer', 'worker', 'forgot_password_customer', 'forgot_password_worker'],
       required: true
     },
 

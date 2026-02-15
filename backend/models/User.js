@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require('mongoose'); 
 
 const userSchema = new mongoose.Schema({
   phone: {
@@ -8,6 +8,25 @@ const userSchema = new mongoose.Schema({
     trim: true,
     match: /^[0-9]{10}$/
   },
+
+  // ✅ NEW: Username + Password Hash (for password login)
+  username: {
+  type: String,
+  required: false,
+  unique: true,
+  sparse: true,
+  trim: true,
+  lowercase: true,
+  minlength: 3,
+  maxlength: 30,
+},
+  passwordHash: {
+  type: String,
+  required: false,
+  select: false,
+},
+
+
   fullName: {
     type: String,
     trim: true
@@ -40,5 +59,9 @@ const userSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+// ✅ ensure uniqueness (extra safety)
+
+
 
 module.exports = mongoose.model('User', userSchema);

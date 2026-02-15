@@ -1,3 +1,4 @@
+// backend/models/Worker.js
 const mongoose = require('mongoose');
 const { getRateBounds } = require('../utils/ratePolicy');
 
@@ -8,16 +9,56 @@ const workerSchema = new mongoose.Schema(
       required: false,
       trim: true,
     },
+
     phone: {
       type: String,
       required: true,
       unique: true,
+      trim: true,
+      match: /^[0-9]{10}$/,
     },
-    workerId: {
+
+    // ✅ NEW: track how this worker authenticates (OTP-first vs Password)
+    authProvider: {
       type: String,
-      required: true,
-      unique: true,
+      enum: ['otp', 'password'],
+      default: 'otp',
     },
+
+    // ✅ Username + Password Hash (required only for password auth)
+    username: {
+      type: String,
+      required: function () {
+        return this.authProvider === 'password';
+      },
+      unique: true,
+      trim: true,
+      lowercase: true,
+      minlength: 3,
+      maxlength: 30,
+      sparse: true, // ✅ allows many docs to have username = undefined
+    },
+
+    passwordHash: {
+      type: String,
+      required: function () {
+        return this.authProvider === 'password';
+      },
+      select: false,
+    },
+
+    workerId: {
+  type: String,
+  unique: true,
+  required: true,
+  immutable: true, // ✅ once set, cannot be changed
+  default: function () {
+    // WRK + last 6 digits of timestamp (simple + readable)
+    return 'WRK' + Date.now().toString().slice(-6);
+  },
+},
+
+
     idProofNumber: {
       type: String,
       default: '',
@@ -52,7 +93,6 @@ const workerSchema = new mongoose.Schema(
       },
       validate: {
         validator: function (value) {
-          // If profile not complete, skip validation
           if (!this.isProfileComplete) return true;
 
           const category =
@@ -74,9 +114,9 @@ const workerSchema = new mongoose.Schema(
     },
 
     pricing: {
-      baseRate: { type: Number, default: null }, // reserved for future price rules
+      baseRate: { type: Number, default: null },
       busyMultiplierEnabled: { type: Boolean, default: false },
-      busyHourMultiplier: { type: Number, default: 1 }, // reserved for future "Busy hours" feature
+      busyHourMultiplier: { type: Number, default: 1 },
     },
 
     rating: {
@@ -85,22 +125,27 @@ const workerSchema = new mongoose.Schema(
       min: 0,
       max: 5,
     },
+
     totalRatings: {
       type: Number,
       default: 0,
     },
+
     totalReviews: {
       type: Number,
       default: 0,
     },
+
     experience: {
       type: Number,
       default: 0,
     },
+
     availability: {
       type: Boolean,
       default: true,
     },
+
     isOnline: {
       type: Boolean,
       default: false,
@@ -114,11 +159,7 @@ const workerSchema = new mongoose.Schema(
       longitude: Number,
     },
 
-    skills: [
-      {
-        type: String,
-      },
-    ],
+    skills: [{ type: String }],
 
     completedJobs: {
       type: Number,
@@ -129,20 +170,12 @@ const workerSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 // ✅ Keep pricing.baseRate in sync with pricePerHour for now (future-proofing)
 workerSchema.pre('save', function (next) {
-  // Only sync baseRate if a real price exists
   if (typeof this.pricePerHour === 'number' && this.pricing) {
     if (this.pricing.baseRate === null || this.pricing.baseRate === undefined) {
       this.pricing.baseRate = this.pricePerHour;
@@ -151,7 +184,8 @@ workerSchema.pre('save', function (next) {
   next();
 });
 
-// Indexes
+// ✅ Indexes
+
 workerSchema.index({ serviceCategory: 1, availability: 1, rating: -1 });
 workerSchema.index({ 'location.pincode': 1 });
 

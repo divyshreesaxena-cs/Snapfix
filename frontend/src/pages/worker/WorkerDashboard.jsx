@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { workerProfileAPI, workerBookingsAPI } from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
 
 export default function WorkerDashboard() {
   const navigate = useNavigate();
+  const { updateUser } = useAuth();
 
   const [worker, setWorker] = useState(null);
   const [stats, setStats] = useState({
@@ -13,6 +15,8 @@ export default function WorkerDashboard() {
     completed: 0,
   });
   const [loading, setLoading] = useState(true);
+
+  const didSyncUser = useRef(false); // ✅ prevents infinite loop
 
   const serviceLabel = useMemo(() => {
     if (!worker) return "—";
@@ -31,7 +35,14 @@ export default function WorkerDashboard() {
         const w = profileRes?.data?.data || profileRes?.data?.worker || profileRes?.data;
 
         if (!alive) return;
+
         setWorker(w);
+
+        // ✅ sync auth user ONCE to avoid re-fetch loop
+        if (w && !didSyncUser.current) {
+          updateUser(w);
+          didSyncUser.current = true;
+        }
 
         if (w && w.isProfileComplete === false) {
           navigate("/worker/profile-setup", { replace: true });
@@ -42,6 +53,7 @@ export default function WorkerDashboard() {
         const data = bookingsRes?.data?.data || bookingsRes?.data;
 
         if (!alive) return;
+
         setStats({
           pending: data?.pending ?? 0,
           accepted: data?.accepted ?? 0,
@@ -59,7 +71,7 @@ export default function WorkerDashboard() {
     return () => {
       alive = false;
     };
-  }, [navigate]);
+  }, [navigate, updateUser]);
 
   return (
     <div className="min-h-screen">
