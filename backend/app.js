@@ -23,7 +23,7 @@ const createApp = ({ connectDatabase = true } = {}) => {
   const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://snapfix-ebon.vercel.app/', // replace with your exact Vercel URL
+  'https://snapfix-ebon.vercel.app', // replace with your exact Vercel URL
 ];
 
 app.use(requestContext);
